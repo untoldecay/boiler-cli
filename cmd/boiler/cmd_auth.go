@@ -124,5 +124,20 @@ func authCommands() []*cobra.Command {
 		},
 	}
 
-	return []*cobra.Command{login, logout, whoami, status}
+	audit := &cobra.Command{
+		Use:   "audit",
+		Short: "Show recent admin/API actions (audit log)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			limit, _ := cmd.Flags().GetInt("limit")
+			body, err := apiRequest("GET", fmt.Sprintf("/admin/audit?limit=%d", limit), nil)
+			if err != nil {
+				return err
+			}
+			printJSON(body["entries"])
+			return nil
+		},
+	}
+	audit.Flags().Int("limit", 50, "max entries")
+
+	return []*cobra.Command{login, logout, whoami, status, audit}
 }

@@ -140,6 +140,71 @@ func dataCommands() []*cobra.Command {
 	rowsFetch.Flags().Int("offset", 0, "offset")
 	rows.AddCommand(rowsFetch)
 
+	rowsInsert := &cobra.Command{Use: "insert", Short: "Insert a row (--set col=val …)", RunE: func(cmd *cobra.Command, args []string) error {
+		database, _ := reqStr(cmd, "db")
+		table, _ := cmd.Flags().GetString("table")
+		set, _ := cmd.Flags().GetStringArray("set")
+		if database == "" || table == "" || len(set) == 0 {
+			return fmt.Errorf("--db --table and at least one --set col=val are required")
+		}
+		body, err := apiRequest("POST", fmt.Sprintf("/admin/databases/%s/tables/%s/rows", database, table), map[string]any{"values": parseKV(set)})
+		if err != nil {
+			return err
+		}
+		printJSON(body)
+		return nil
+	}}
+	rowsInsert.Flags().String("db", "", "database")
+	rowsInsert.Flags().String("table", "", "table")
+	rowsInsert.Flags().StringArray("set", nil, "col=val (repeatable)")
+	rows.AddCommand(rowsInsert)
+
+	rowsUpdate := &cobra.Command{Use: "update", Short: "Update rows (--set … --where …; critical)", RunE: func(cmd *cobra.Command, args []string) error {
+		database, _ := reqStr(cmd, "db")
+		table, _ := cmd.Flags().GetString("table")
+		set, _ := cmd.Flags().GetStringArray("set")
+		where, _ := cmd.Flags().GetStringArray("where")
+		if database == "" || table == "" || len(set) == 0 || len(where) == 0 {
+			return fmt.Errorf("--db --table --set --where are required (where prevents mass updates)")
+		}
+		if err := mustConfirm(fmt.Sprintf("update rows in %s.%s where %v", database, table, where)); err != nil {
+			return err
+		}
+		body, err := apiRequest("PATCH", fmt.Sprintf("/admin/databases/%s/tables/%s/rows", database, table), map[string]any{"set": parseKV(set), "where": parseKV(where)})
+		if err != nil {
+			return err
+		}
+		printJSON(body)
+		return nil
+	}}
+	rowsUpdate.Flags().String("db", "", "database")
+	rowsUpdate.Flags().String("table", "", "table")
+	rowsUpdate.Flags().StringArray("set", nil, "col=val (repeatable)")
+	rowsUpdate.Flags().StringArray("where", nil, "col=val match (repeatable)")
+	rows.AddCommand(rowsUpdate)
+
+	rowsDelete := &cobra.Command{Use: "delete", Short: "Delete rows (--where …; critical)", RunE: func(cmd *cobra.Command, args []string) error {
+		database, _ := reqStr(cmd, "db")
+		table, _ := cmd.Flags().GetString("table")
+		where, _ := cmd.Flags().GetStringArray("where")
+		if database == "" || table == "" || len(where) == 0 {
+			return fmt.Errorf("--db --table --where are required (where prevents mass deletes)")
+		}
+		if err := mustConfirm(fmt.Sprintf("DELETE rows in %s.%s where %v", database, table, where)); err != nil {
+			return err
+		}
+		body, err := apiRequest("DELETE", fmt.Sprintf("/admin/databases/%s/tables/%s/rows", database, table), map[string]any{"where": parseKV(where)})
+		if err != nil {
+			return err
+		}
+		printJSON(body)
+		return nil
+	}}
+	rowsDelete.Flags().String("db", "", "database")
+	rowsDelete.Flags().String("table", "", "table")
+	rowsDelete.Flags().StringArray("where", nil, "col=val match (repeatable)")
+	rows.AddCommand(rowsDelete)
+
 	// ---- sql (generic; RBAC enforced server-side) ----
 	sql := &cobra.Command{
 		Use:   "sql [query]",
@@ -205,4 +270,17 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// parseKV turns ["col=val", "c2=v2"] into {col:val, c2:v2} (value = everything after first '=').
+func parseKV(pairs []string) map[string]any {
+	m := map[string]any{}
+	for _, p := range pairs {
+		i := strings.IndexByte(p, '=')
+		if i < 0 {
+			continue
+		}
+		m[strings.TrimSpace(p[:i])] = p[i+1:]
+	}
+	return m
 }

@@ -8,12 +8,20 @@ It's a thin, auditable client over Boiler's existing `/admin` API. Every action 
 logged command.
 
 ## Install
+
+**One-liner (no Go needed)** — downloads a prebuilt binary to your PATH:
+```sh
+curl -fsSL https://raw.githubusercontent.com/untoldecay/boiler-cli/main/install.sh | sh
+# pin a version:
+curl -fsSL https://raw.githubusercontent.com/untoldecay/boiler-cli/main/install.sh | sh -s -- v0.2.0
+```
+
+**With Go:**
 ```sh
 go install github.com/untoldecay/boiler-cli/cmd/boiler@latest
-# or pin a version:
-go install github.com/untoldecay/boiler-cli/cmd/boiler@v0.1.0
 ```
-Installs a `boiler` binary into `$(go env GOPATH)/bin` (add it to your PATH).
+Installs `boiler` into `$(go env GOPATH)/bin` — make sure that's on your PATH
+(`export PATH="$PATH:$(go env GOPATH)/bin"`).
 
 ## Build from source
 ```sh

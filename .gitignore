@@ -1,3 +1,4 @@
 # built binaries
 /boiler
 cmd/boiler/boiler
+dist/
