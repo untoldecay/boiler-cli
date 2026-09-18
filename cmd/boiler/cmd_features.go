@@ -10,7 +10,17 @@ import (
 )
 
 func featureCommands() []*cobra.Command {
-	return []*cobra.Command{endpointCmds(), webhookCmds(), embedCmds(), tokenCmds(), infraCmds()}
+	return []*cobra.Command{endpointCmds(), webhookCmds(), embedCmds(), tokenCmds(), userCmds(), infraCmds()}
+}
+
+func splitCSV(s string) []string {
+	out := []string{}
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // ---- endpoints ----
@@ -36,18 +46,57 @@ func endpointCmds() *cobra.Command {
 	list.Flags().String("table", "", "filter by table")
 	c.AddCommand(list)
 
-	create := &cobra.Command{Use: "create", Short: "Create an endpoint from a JSON body (public/write = critical)", RunE: func(cmd *cobra.Command, a []string) error {
+	create := &cobra.Command{Use: "create", Short: "Create an endpoint (read or vector). Public = critical.", RunE: func(cmd *cobra.Command, a []string) error {
 		database, err := reqStr(cmd, "db")
 		if err != nil {
 			return err
 		}
-		raw, _ := cmd.Flags().GetString("json")
-		if raw == "" {
-			return fmt.Errorf("--json '<body>' is required (name, table, type, config, access, …)")
-		}
 		var payload map[string]any
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			return fmt.Errorf("invalid --json: %v", err)
+		if raw, _ := cmd.Flags().GetString("json"); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				return fmt.Errorf("invalid --json: %v", err)
+			}
+		} else {
+			name, _ := cmd.Flags().GetString("name")
+			table, _ := cmd.Flags().GetString("table")
+			cols, _ := cmd.Flags().GetString("columns")
+			if name == "" || table == "" || cols == "" {
+				return fmt.Errorf("--name --table --columns are required (or pass --json)")
+			}
+			etype, _ := cmd.Flags().GetString("type")
+			access, _ := cmd.Flags().GetString("access")
+			token, _ := cmd.Flags().GetString("token")
+			columns := splitCSV(cols)
+			var config map[string]any
+			if etype == "vector" {
+				vcol, _ := cmd.Flags().GetString("vector-column")
+				provider, _ := cmd.Flags().GetString("provider")
+				model, _ := cmd.Flags().GetString("model")
+				if vcol == "" || provider == "" || model == "" {
+					return fmt.Errorf("vector endpoints need --vector-column --provider --model")
+				}
+				config = map[string]any{"columns": columns, "vectorColumn": vcol, "provider": provider, "model": model, "pagination": map[string]any{"limit": 10}}
+			} else {
+				etype = "read"
+				var sort any
+				if s, _ := cmd.Flags().GetString("sort"); s != "" {
+					parts := strings.SplitN(s, ":", 2)
+					dir := "asc"
+					if len(parts) == 2 {
+						dir = parts[1]
+					}
+					sort = map[string]any{"column": parts[0], "direction": dir}
+				}
+				filt, _ := cmd.Flags().GetString("filterable")
+				config = map[string]any{"columns": columns, "filterableColumns": splitCSV(filt), "sort": sort, "pagination": map[string]any{"limit": 20}, "format": "json"}
+			}
+			payload = map[string]any{"name": name, "table": table, "type": etype, "config": config, "access": access}
+			if token != "" {
+				payload["authTokenId"] = token
+			}
+			if p, _ := cmd.Flags().GetString("path"); p != "" {
+				payload["path"] = p
+			}
 		}
 		if payload["access"] == "public" {
 			if err := mustConfirm("publish a PUBLIC endpoint on " + database); err != nil {
@@ -62,7 +111,19 @@ func endpointCmds() *cobra.Command {
 		return nil
 	}}
 	create.Flags().String("db", "", "database")
-	create.Flags().String("json", "", "endpoint body as JSON")
+	create.Flags().String("name", "", "endpoint name")
+	create.Flags().String("path", "", "URL path (default: from name)")
+	create.Flags().String("table", "", "table")
+	create.Flags().String("type", "read", "read | vector")
+	create.Flags().String("columns", "", "comma list of columns to return")
+	create.Flags().String("filterable", "", "read: comma list of filterable columns")
+	create.Flags().String("sort", "", "read: sort as col:asc|desc")
+	create.Flags().String("vector-column", "", "vector: embedding column to search")
+	create.Flags().String("provider", "", "vector: query embedder provider")
+	create.Flags().String("model", "", "vector: query embedder model")
+	create.Flags().String("access", "protected", "protected | public")
+	create.Flags().String("token", "", "auth token id (protected)")
+	create.Flags().String("json", "", "raw endpoint body (overrides flags)")
 	c.AddCommand(create)
 
 	del := &cobra.Command{Use: "delete", Short: "Delete an endpoint (critical)", RunE: func(cmd *cobra.Command, a []string) error {
@@ -235,6 +296,72 @@ func embedCmds() *cobra.Command {
 	run.Flags().String("model", "", "model name")
 	run.Flags().String("column", "", "target vector column (default <table>_embedding)")
 	c.AddCommand(run)
+
+	// embed key set/remove (cloud provider API keys)
+	key := &cobra.Command{Use: "key", Short: "Manage cloud provider API keys"}
+	keySet := &cobra.Command{Use: "set", Short: "Set a provider API key (critical)", RunE: func(cmd *cobra.Command, a []string) error {
+		provider, _ := reqStr(cmd, "provider")
+		val, _ := cmd.Flags().GetString("key")
+		if provider == "" || val == "" {
+			return fmt.Errorf("--provider and --key are required")
+		}
+		if err := mustConfirm("set API key for " + provider); err != nil {
+			return err
+		}
+		if _, err := apiRequest("PUT", "/admin/embedding/providers/"+provider+"/key", map[string]any{"key": val}); err != nil {
+			return err
+		}
+		fmt.Printf("✓ Key set for %s\n", provider)
+		return nil
+	}}
+	keySet.Flags().String("provider", "", "openai | gemini")
+	keySet.Flags().String("key", "", "API key")
+	key.AddCommand(keySet)
+	keyRm := &cobra.Command{Use: "remove", Short: "Remove a provider API key", RunE: func(cmd *cobra.Command, a []string) error {
+		provider, _ := reqStr(cmd, "provider")
+		if provider == "" {
+			return fmt.Errorf("--provider is required")
+		}
+		if _, err := apiRequest("DELETE", "/admin/embedding/providers/"+provider+"/key", nil); err != nil {
+			return err
+		}
+		fmt.Printf("✓ Key removed for %s\n", provider)
+		return nil
+	}}
+	keyRm.Flags().String("provider", "", "openai | gemini")
+	key.AddCommand(keyRm)
+	c.AddCommand(key)
+
+	// embed auto (incremental re-embed configs)
+	auto := &cobra.Command{Use: "auto", Short: "Manage auto re-embed (keep-in-sync) configs"}
+	autoList := &cobra.Command{Use: "list", Short: "List auto-embed configs", RunE: func(cmd *cobra.Command, a []string) error {
+		database, err := reqStr(cmd, "db")
+		if err != nil {
+			return err
+		}
+		body, err := apiRequest("GET", "/admin/databases/"+database+"/auto-embed", nil)
+		if err != nil {
+			return err
+		}
+		printJSON(body["configs"])
+		return nil
+	}}
+	autoList.Flags().String("db", "", "database")
+	auto.AddCommand(autoList)
+	autoDel := &cobra.Command{Use: "delete", Short: "Delete an auto-embed config", RunE: func(cmd *cobra.Command, a []string) error {
+		id, err := reqStr(cmd, "id")
+		if err != nil {
+			return err
+		}
+		if _, err := apiRequest("DELETE", "/admin/auto-embed/"+id, nil); err != nil {
+			return err
+		}
+		fmt.Println("✓ Deleted auto-embed config", id)
+		return nil
+	}}
+	autoDel.Flags().String("id", "", "config id")
+	auto.AddCommand(autoDel)
+	c.AddCommand(auto)
 	return c
 }
 
@@ -297,6 +424,24 @@ func tokenCmds() *cobra.Command {
 	}}
 	del.Flags().String("id", "", "token id")
 	c.AddCommand(del)
+
+	reveal := &cobra.Command{Use: "reveal", Short: "Reveal a token's secret (admin; critical)", RunE: func(cmd *cobra.Command, a []string) error {
+		id, err := reqStr(cmd, "id")
+		if err != nil {
+			return err
+		}
+		if err := mustConfirm("reveal secret for token " + id); err != nil {
+			return err
+		}
+		body, err := apiRequest("POST", "/api/tokens/"+id+"/reveal", nil)
+		if err != nil {
+			return err
+		}
+		printJSON(body)
+		return nil
+	}}
+	reveal.Flags().String("id", "", "token id")
+	c.AddCommand(reveal)
 	return c
 }
 

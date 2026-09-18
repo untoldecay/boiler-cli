@@ -51,9 +51,12 @@ boiler tables describe --db X --table T
 boiler rows fetch --db X --table T [--limit 50 --offset 0]
 boiler sql --db X "SELECT …"                 # writes need --confirm
 
-# API endpoints
+# API endpoints (friendly flags, or --json for anything)
 boiler endpoints list --db X [--table T]
-boiler endpoints create --db X --json '{"name":"…","table":"…","type":"read","config":{…},"access":"protected"}'
+boiler endpoints create --db X --name "digest read" --table daily_digest --columns id,title \
+  [--filterable tag --sort id:desc --access protected --token <id>]
+boiler endpoints create --db X --name "digest search" --table daily_digest --type vector \
+  --columns id,title --vector-column daily_digest_embedding --provider ollama --model nomic-embed-text
 boiler endpoints delete --id … --confirm
 
 # webhooks
@@ -65,11 +68,21 @@ boiler webhooks delete --id … --confirm
 # embeddings
 boiler embed providers
 boiler embed run --db X --table T --template '{{summary}}' --provider ollama --model nomic-embed-text [--column T_embedding]
+boiler embed key set --provider openai --key sk-… --confirm      # cloud provider keys
+boiler embed key remove --provider openai
+boiler embed auto list --db X                                     # keep-in-sync configs
+boiler embed auto delete --id …
 
 # tokens
 boiler tokens list
 boiler tokens create --name t --db X --perms read,write --confirm
+boiler tokens reveal --id … --confirm
 boiler tokens delete --id … --confirm
+
+# users
+boiler users list
+boiler users create --email a@b.com --password … --role admin --confirm
+boiler users delete --id … --confirm
 
 # local inference
 boiler infra local-inference status
