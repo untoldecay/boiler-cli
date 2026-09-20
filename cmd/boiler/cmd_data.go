@@ -79,7 +79,18 @@ func dataCommands() []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			printJSON(extractTables(body))
+			tbls := extractTables(body)
+			comments := tableComments(database)
+			for _, t := range tbls {
+				if m, ok := t.(map[string]any); ok {
+					if name, ok := m["name"].(string); ok {
+						if c, ok := comments[name]; ok {
+							m["comment"] = c
+						}
+					}
+				}
+			}
+			printJSON(tbls)
 			return nil
 		},
 	}
@@ -103,6 +114,21 @@ func dataCommands() []*cobra.Command {
 			}
 			for _, t := range extractTables(body) {
 				if m, ok := t.(map[string]any); ok && m["name"] == table {
+					if tc := tableComments(database)[table]; tc != "" {
+						m["comment"] = tc
+					}
+					ccs := columnComments(database, table)
+					if cols, ok := m["columns"].([]any); ok {
+						for _, col := range cols {
+							if cm, ok := col.(map[string]any); ok {
+								if name, ok := cm["name"].(string); ok {
+									if c, ok := ccs[name]; ok {
+										cm["comment"] = c
+									}
+								}
+							}
+						}
+					}
 					printJSON(m)
 					return nil
 				}
@@ -250,6 +276,59 @@ func extractTables(body map[string]any) []any {
 		}
 	}
 	return nil
+}
+
+// fetchRows runs a SELECT via /admin/execute and returns the rows as maps.
+func fetchRows(database, query string) []map[string]any {
+	body, err := apiRequest("POST", "/admin/execute", map[string]any{"query": query, "database": database})
+	if err != nil {
+		return nil
+	}
+	raw, _ := body["rows"].([]any)
+	if raw == nil {
+		if data, ok := body["data"].(map[string]any); ok {
+			raw, _ = data["rows"].([]any)
+		}
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, r := range raw {
+		if m, ok := r.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// tableComments returns {table name: comment} for the public schema (obj_description).
+func tableComments(database string) map[string]string {
+	q := `SELECT c.relname AS name, obj_description(c.oid) AS comment
+	      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	      WHERE c.relkind IN ('r','p','v','m') AND n.nspname = 'public'`
+	m := map[string]string{}
+	for _, row := range fetchRows(database, q) {
+		name, _ := row["name"].(string)
+		if cmt, ok := row["comment"].(string); ok && name != "" && cmt != "" {
+			m[name] = cmt
+		}
+	}
+	return m
+}
+
+// columnComments returns {column name: comment} for one table (col_description).
+func columnComments(database, table string) map[string]string {
+	esc := strings.ReplaceAll(table, "'", "''")
+	q := fmt.Sprintf(`SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS comment
+	      FROM pg_attribute a
+	      WHERE a.attrelid = ('public.' || quote_ident('%s'))::regclass
+	        AND a.attnum > 0 AND NOT a.attisdropped`, esc)
+	m := map[string]string{}
+	for _, row := range fetchRows(database, q) {
+		name, _ := row["name"].(string)
+		if cmt, ok := row["comment"].(string); ok && name != "" && cmt != "" {
+			m[name] = cmt
+		}
+	}
+	return m
 }
 
 func runSQL(database, query string) error {
