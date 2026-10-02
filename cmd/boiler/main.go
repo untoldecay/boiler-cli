@@ -36,8 +36,30 @@ func effectiveVersion() string {
 func main() {
 	ver := effectiveVersion()
 	root := &cobra.Command{
-		Use:           "boiler",
-		Short:         "Admin control-plane CLI for Boiler",
+		Use:     "boiler",
+		Short:   "Admin control-plane CLI for Boiler",
+		Long: `Admin control-plane CLI for Boiler — drive databases, tables, rows, endpoints,
+webhooks, embeddings, tokens and local inference from the terminal.
+
+Authentication (either one):
+  • boiler login --server <url>   interactive; stores a short-lived, auto-refreshed session.
+  • BOILER_SERVER + BOILER_TOKEN  headless/scoped; these env vars take PRECEDENCE over any
+                                  stored login (no 'boiler login' needed, works after logout).
+                                  Put an API token in BOILER_TOKEN and every command runs under
+                                  that token's scope (out-of-scope actions return 403).
+
+Environment:
+  BOILER_SERVER   Base/root URL of the instance, e.g. https://boiler-alpha.decaylab.com
+                  (the ROOT url — NOT an /admin or /api/data path).
+  BOILER_TOKEN    API token (or session token). When set, it overrides the stored login and
+                  all actions are enforced against that token's permissions.
+
+Example (scoped, headless):
+  export BOILER_SERVER=https://boiler-alpha.decaylab.com
+  export BOILER_TOKEN=<your-api-token>
+  boiler sql "SELECT 1" --db Agent_Collab
+
+Critical/destructive actions require --confirm.`,
 		Version:       ver,
 		SilenceUsage:  true,
 		SilenceErrors: true,

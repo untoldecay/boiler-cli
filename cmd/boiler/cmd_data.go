@@ -141,7 +141,8 @@ func dataCommands() []*cobra.Command {
 	tables.AddCommand(tablesDesc)
 
 	// ---- rows ----
-	rows := &cobra.Command{Use: "rows", Short: "Read/query rows"}
+	rows := &cobra.Command{Use: "rows", Short: "Read/query rows",
+		Long: "Read/query rows.\n\nAuth: `boiler login`, or set BOILER_SERVER + BOILER_TOKEN to run scoped/headless\n(env vars take precedence over any stored login). See `boiler --help`."}
 	rowsFetch := &cobra.Command{
 		Use:   "fetch",
 		Short: "Fetch rows from a table",
@@ -235,6 +236,9 @@ func dataCommands() []*cobra.Command {
 	sql := &cobra.Command{
 		Use:   "sql [query]",
 		Short: "Run SQL (SELECT runs freely; writes require --confirm)",
+		Long: "Run SQL against a database (SELECT runs freely; writes require --confirm).\n\n" +
+			"Auth: `boiler login`, or set BOILER_SERVER + BOILER_TOKEN to run scoped/headless\n" +
+			"(env vars take precedence over any stored login). See `boiler --help`.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			database, err := reqStr(cmd, "db")
